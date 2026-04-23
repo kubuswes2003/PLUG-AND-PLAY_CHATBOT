@@ -47,6 +47,12 @@
 
   // Odczyt atrybutów data-*. Każdy ma sensowny fallback, żeby widget
   // nie wywalił się, gdy ktoś zapomni któregoś atrybutu.
+  //
+  // COMPANY_NAME / COMPANY_TOPIC / CONTACT_EMAIL / CONTACT_PHONE są
+  // wysyłane w body każdego /chat i wstrzykiwane do system promptu
+  // po stronie backendu — czyli ich treść wpływa na instrukcje dla LLM.
+  // Backend waliduje i sanitizuje te pola (patrz chat.py), ale dobrze
+  // że klient też nie wysyła niczego podejrzanego.
   var COMPANY_NAME =
     (currentScript && currentScript.getAttribute('data-company-name')) ||
     'Chatbot';
@@ -55,6 +61,13 @@
     'http://localhost:8000';
   var COMPANY_ID =
     (currentScript && currentScript.getAttribute('data-company-id')) || 'demo';
+  var COMPANY_TOPIC =
+    (currentScript && currentScript.getAttribute('data-company-topic')) ||
+    'obsługa klienta';
+  var CONTACT_EMAIL =
+    (currentScript && currentScript.getAttribute('data-contact-email')) || '';
+  var CONTACT_PHONE =
+    (currentScript && currentScript.getAttribute('data-contact-phone')) || '';
 
   // ============================================================
   // 2) Style CSS — wstrzykiwane do <head> jako <style>
@@ -231,18 +244,75 @@
   var closeBtn = win.querySelector('.pcb-close');
 
   // ============================================================
-  // 4) Zachowanie — funkcje sterujące UI i komunikacją z API
+  // 4) Stan rozmowy — historia w pamięci
+  // ============================================================
+  // Przechowujemy pary {role, content} w formacie zgodnym z
+  // Ollama/OpenAI Chat API. Wysyłamy to pole w body każdego
+  // requestu, żeby Bielik pamiętał kontekst poprzednich wymian.
+  //
+  // Uwaga: wiadomość powitalna "Cześć! W czym mogę pomóc?" NIE
+  // trafia do historii — to czysty element UX, nie chcemy żeby
+  // zanieczyszczał kontekst wysyłany do modelu.
+  //
+  // Historia jest CZYSZCZONA gdy user zamknie okienko (patrz
+  // toggleWindow) — każde otwarcie = nowa rozmowa.
+  var conversationHistory = [];
+
+  // Sliding window: trzymamy maksymalnie 10 par (user + assistant) =
+  // 20 wiadomości. Starsze usuwane są po każdym udanym roundtripie,
+  // żeby nie przekroczyć okna kontekstu Bielika.
+  var MAX_HISTORY_PAIRS = 10;
+
+  // Tekst powitania bota — stała, żeby łatwo zmienić w jednym miejscu.
+  var WELCOME_MESSAGE = 'Cześć! W czym mogę pomóc?';
+
+  // ============================================================
+  // 5) Zachowanie — funkcje sterujące UI i komunikacją z API
   // ============================================================
 
   // Otwiera lub zamyka okno (toggle klasy .pcb-open).
-  // Po otwarciu ustawiamy focus na input, żeby user mógł od razu
-  // pisać (setTimeout 220ms — tyle trwa animacja otwierania).
+  //
+  // Przy ZAMKNIĘCIU czyścimy historię i widoczne wiadomości —
+  // każde otwarcie jest świeżą rozmową (wymaganie produktowe).
+  // Reset robimy z opóźnieniem ~250ms, żeby animacja fade-out
+  // zdążyła się zakończyć i user nie zobaczył kasowania.
+  //
+  // Przy OTWIERANIU ustawiamy focus na input po animacji (220ms),
+  // żeby user mógł od razu pisać.
   function toggleWindow() {
+    var wasOpen = win.classList.contains('pcb-open');
     win.classList.toggle('pcb-open');
-    if (win.classList.contains('pcb-open')) {
+
+    if (wasOpen) {
+      // Zamknięcie → zaplanowany reset po animacji.
+      setTimeout(resetConversation, 250);
+    } else {
+      // Otwarcie → focus na input.
       setTimeout(function () {
         inputEl.focus();
       }, 220);
+    }
+  }
+
+  // Kasuje stan rozmowy (historia + DOM wiadomości) i przywraca
+  // wiadomość powitalną. Wywoływana:
+  //   - przy starcie widgetu (żeby powitanie pojawiło się od razu),
+  //   - po zamknięciu okienka (żeby kolejne otwarcie było czyste).
+  function resetConversation() {
+    conversationHistory = [];
+    messagesEl.innerHTML = '';
+    addMessage(WELCOME_MESSAGE, 'bot');
+  }
+
+  // Dopisuje wpis do historii i utrzymuje sliding window.
+  // Zawsze usuwamy PARAMI (user+assistant), żeby historia była
+  // spójna — model nie lubi dostać osieroconego "assistant" bez
+  // poprzedzającego "user".
+  function pushHistory(role, content) {
+    conversationHistory.push({ role: role, content: content });
+    while (conversationHistory.length > MAX_HISTORY_PAIRS * 2) {
+      conversationHistory.shift(); // najstarszy user
+      conversationHistory.shift(); // najstarszy assistant
     }
   }
 
@@ -290,12 +360,24 @@
   // ----------------------------
   // Główna funkcja: wysyłanie pytania do backendu
   // ----------------------------
+  // Krok po kroku:
+  //   1. Pokaż pytanie w UI (optymistyczny render).
+  //   2. Wyślij POST /chat z aktualną historią + pytaniem.
+  //      UWAGA: wysyłamy historię SPRZED dodania aktualnego pytania,
+  //      bo backend sam doklei pytanie do promptu.
+  //   3. Po sukcesie: pokaż odpowiedź + dopisz obie wiadomości
+  //      (user + assistant) do historii przez pushHistory.
+  //   4. Po błędzie: pokaż generyczny komunikat, ale NIE zapisuj
+  //      nic do historii — nie chcemy, żeby Bielik w przyszłych
+  //      requestach widział "Przepraszam wystąpił błąd" jako swoją
+  //      wypowiedź (psułoby to kolejne odpowiedzi).
   function sendMessage() {
     var text = inputEl.value.trim();
     // Pusty tekst albo już trwa wysyłanie → nic nie robimy.
     if (!text || sendBtn.disabled) return;
 
-    // 1. Dodaj wiadomość usera od razu (optymistyczny UI).
+    // 1. Dodaj wiadomość usera do UI (historia dopisywana dopiero
+    // po potwierdzeniu sukcesu od backendu).
     addMessage(text, 'user');
     inputEl.value = '';
 
@@ -303,13 +385,25 @@
     setSending(true);
     var typingEl = showTyping();
 
+    // Zamrożona kopia historii na czas tego requestu. Gdyby user
+    // zamknął okno w trakcie (reset), mamy niezależny snapshot.
+    var historySnapshot = conversationHistory.slice();
+
     // 3. POST /chat do backendu.
     // API_URL.replace(/\/$/, '') usuwa ewentualny końcowy slash,
     // żeby nie dostać ścieżki z "//chat".
     fetch(API_URL.replace(/\/$/, '') + '/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: text, company_id: COMPANY_ID })
+      body: JSON.stringify({
+        question: text,
+        company_id: COMPANY_ID,
+        company_name: COMPANY_NAME,
+        company_topic: COMPANY_TOPIC,
+        contact_email: CONTACT_EMAIL,
+        contact_phone: CONTACT_PHONE,
+        history: historySnapshot
+      })
     })
       .then(function (res) {
         // Rzucamy wyjątek na kody != 2xx, żeby wpadło do .catch()
@@ -324,12 +418,25 @@
         var answer =
           data && typeof data.answer === 'string'
             ? data.answer
-            : 'Przepraszam, wystąpił błąd. Spróbuj ponownie.';
+            : null;
+
+        if (answer === null) {
+          addMessage('Przepraszam, wystąpił błąd. Spróbuj ponownie.', 'bot');
+          return;
+        }
+
         addMessage(answer, 'bot');
+        // Dopisujemy PARĘ do historii tylko po udanym roundtripie.
+        pushHistory('user', text);
+        pushHistory('assistant', answer);
       })
-      .catch(function () {
+      .catch(function (err) {
         // Każdy błąd sieci / timeout / HTTP 5xx → generyczna wiadomość.
         // Nie pokazujemy userowi szczegółów (bezpieczeństwo + UX).
+        // Do konsoli trafia więcej informacji — przydatne dla dev.
+        if (window.console && console.error) {
+          console.error('[pcb-widget] /chat failed:', err);
+        }
         removeTyping(typingEl);
         addMessage('Przepraszam, wystąpił błąd. Spróbuj ponownie.', 'bot');
       })
@@ -342,11 +449,12 @@
   }
 
   // ============================================================
-  // 5) Start — wiadomość powitalna i bindowanie eventów
+  // 6) Start — wiadomość powitalna i bindowanie eventów
   // ============================================================
 
-  // Powitalna wiadomość od bota (pokazuje się od razu po załadowaniu).
-  addMessage('Cześć! W czym mogę pomóc?', 'bot');
+  // Inicjalizacja: powitalna wiadomość + pusta historia.
+  // Ta sama funkcja jest wywoływana przy każdym zamknięciu okienka.
+  resetConversation();
 
   // Klik w launcher → otwórz/zamknij okno.
   launcher.addEventListener('click', toggleWindow);

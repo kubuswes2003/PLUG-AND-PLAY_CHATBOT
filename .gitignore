@@ -5,6 +5,9 @@ venv/
 # Baza wektorowa (lokalna)
 chroma_db/
 
+# Logi rozmów (zawierają treść pytań użytkowników — dane wrażliwe)
+logs/
+
 # Python cache
 __pycache__/
 *.pyc
