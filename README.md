@@ -4,18 +4,18 @@ Scalable, AI-powered customer support solution delivered as a plug-and-play chat
 
 ## Struktura projektu
 
-chatbot/
-├── backend/
-│   ├── main.py          ← punkt wejścia FastAPI 
-│   ├── config.py        ← wspólne ustawienia
-│   ├── chat.py          ← twój moduł /chat
-│   ├── ingest.py        ← moduł Aleksandra /ingest
-│   └── requirements.txt
-├── frontend-widget/
-│   └── widget.js        ← na później
-├── data_samples/
-│   └── test_firma.txt   ← testowa baza wiedzy
-└── README.md
+```
+backend/
+├── main.py          ← punkt wejścia FastAPI
+├── config.py        ← wspólne ustawienia
+├── chat.py          ← moduł /chat
+├── ingest.py        ← moduł /ingest
+└── requirements.txt
+data_samples/
+└── test_firma.txt   ← testowa baza wiedzy
+frontend-widget/
+└── widget.js        ← na później
+```
 
 ## Stack
 
