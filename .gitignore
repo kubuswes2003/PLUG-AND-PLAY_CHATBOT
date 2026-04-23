@@ -1,0 +1,19 @@
+# Środowisko Python
+venv/
+.env
+
+# Baza wektorowa (lokalna)
+chroma_db/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# System
+.DS_Store        # Mac
+Thumbs.db        # Windows
+
+# IDE
+.vscode/
+.idea/.DS_Store
