@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TechSklep — strona testowa</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 0;
+      padding: 40px 20px;
+      background: #f5f5f7;
+      color: #222;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    h1 { margin-top: 0; }
+    code {
+      background: #eef0f4;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>TechSklep — strona testowa widgetu</h1>
+    <p>To jest zwykła strona HTML, na której osadzony jest widget czatu.</p>
+    <p>Kliknij czerwoną ikonkę w prawym dolnym rogu, żeby otworzyć chat.</p>
+    <p>Backend powinien działać na <code>http://localhost:8000</code>.</p>
+
+    <h2>Przykładowe pytania</h2>
+    <ul>
+      <li>W jakich godzinach otwarty jest sklep?</li>
+      <li>Jak długo trwa dostawa?</li>
+      <li>Jak mogę zwrócić produkt?</li>
+      <li>Jaki jest kontakt do biura?</li>
+    </ul>
+  </div>
+
+  <!-- Widget -->
+  <script src="widget.js"
+    data-company-name="TechSklep"
+    data-api-url="http://localhost:8000"
+    data-company-id="demo">
+  </script>
+</body>
+</html>
