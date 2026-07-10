@@ -19,6 +19,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.chat import router as chat_router
+# Router z ingest.py daje endpoint POST /ingest/{company_id} do ładowania
+# bazy wiedzy firmy do ChromaDB. Importujemy pod aliasem, żeby nazwa
+# `router` nie zderzała się z `chat_router` powyżej.
+from backend.ingest import router as ingest_router
 
 # Tworzymy instancję aplikacji. `title` pokaże się w auto-generowanej
 # dokumentacji Swaggera pod http://localhost:8000/docs
@@ -41,6 +45,11 @@ app.add_middleware(
 # Podpinamy router z chat.py. Wszystkie endpointy zdefiniowane
 # w chat.py (np. POST /chat) staną się dostępne w aplikacji.
 app.include_router(chat_router)
+
+# Podpinamy router z ingest.py. Dodaje POST /ingest/{company_id} —
+# endpoint do jednorazowego załadowania wiedzy firmowej do ChromaDB
+# (admin/wdrożeniowiec wywołuje go raz na firmę, nie z poziomu widgetu).
+app.include_router(ingest_router)
 
 
 # Health-check — prosty endpoint do sprawdzenia czy backend żyje.

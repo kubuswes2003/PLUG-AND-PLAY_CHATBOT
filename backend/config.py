@@ -19,6 +19,7 @@ OLLAMA_URL = "http://localhost:11434"
 # = kompromis między jakością a wielkością pamięci (~7 GB RAM).
 # Musi być wcześniej pobrany przez: `ollama pull SpeakLeash/bielik-...`
 LLM_MODEL = "SpeakLeash/bielik-11b-v2.3-instruct:Q4_K_M"
+#LLM_MODEL = "llama3.2:1b"
 
 # Model do zamieniania tekstu na wektory (embeddings).
 # Potrzebny dopiero przy ChromaDB — dla każdego chunku dokumentu
