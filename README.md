@@ -1,133 +1,96 @@
-# PLUG-AND-PLAY CHATBOT
+# Plug-and-Play Chatbot
 
-Scalable, AI-powered customer support solution delivered as a plug-and-play chatbot for business websites.
+A customer-support chat widget that a company embeds with a single `<script>` tag, backed by a FastAPI service that answers from that company's own knowledge base using a **locally hosted** LLM.
 
-Widget osadzany jednym `<script>` na dowolnej stronie, backend FastAPI + lokalny LLM **Bielik 11B** przez Ollama, historia rozmowy, logowanie per firma i warstwa bezpieczeństwa („kaganiec") chroniąca przed halucynacjami i atakami prompt injection.
+> **Status: in development.** It runs end to end on a development machine. It has not been deployed for a real company, and several things listed under *Known gaps* must be fixed before it could be.
 
-## Struktura projektu
+## Context
 
+A side project built with a colleague. The split, as it stands in the git history:
+
+| | |
+|---|---|
+| **Jakub Wesołowski** (me) | Project scaffold, `/chat` endpoint and Ollama integration, the embeddable widget, conversation history, per-company logging and audit, input validation, prompt-level guardrails |
+| **A colleague** | ChromaDB ingestion pipeline (`/ingest`) and wiring semantic retrieval into `/chat` — the RAG half of the system |
+
+## Why local
+
+Support conversations carry customer data, and a small company often cannot send it to a third-party API. Everything here runs on the company's own machine: **Bielik 11B** (a Polish open-weights model) for generation and **nomic-embed-text** for embeddings, both through Ollama. Nothing leaves the host.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    W["widget.js<br/>one script tag, vanilla JS"]
+    API["FastAPI<br/>POST /chat"]
+    CH[("ChromaDB<br/>collection per company")]
+    OL["Ollama<br/>Bielik 11B · nomic-embed-text"]
+    LOG["logs/company_id.log<br/>JSON Lines"]
+    ING["POST /ingest/{company_id}<br/>chunk + embed knowledge file"]
+
+    W -->|"question + history + data-* config"| API
+    API -->|"embed question, top-3 chunks"| CH
+    API -->|"system prompt + context + history"| OL
+    OL -->|answer| API --> W
+    API --> LOG
+    ING --> CH
 ```
-backend/
-├── main.py          ← punkt wejścia FastAPI + CORS
-├── config.py        ← wspólne ustawienia (model, ścieżki)
-├── chat.py          ← endpoint POST /chat (walidacja, prompt, Ollama, logi)
-├── ingest.py        ← chunking + embeddingi + zapis do ChromaDB (POST /ingest)
-└── requirements.txt
-data_samples/
-└── test_firma.txt   ← testowa baza wiedzy (TechSklep)
-frontend-widget/
-├── widget.js        ← jednoplikowy widget (IIFE, vanilla JS)
-└── index.html       ← strona testowa z osadzonym widgetem
-logs/                ← JSON Lines per company_id (ignorowane w git)
-```
 
-## Stack
+One backend serves any number of companies. The widget carries its own configuration in `data-*` attributes (company name, topic, contact e-mail and phone, `company_id`), the backend builds the system prompt from them, and each company's knowledge lives in its own ChromaDB collection.
 
-- **LLM:** Bielik 11B v2.3 Instruct (Q4_K_M) przez Ollama
-- **Embeddings:** nomic-embed-text przez Ollama (768 wymiarów, cosine)
-- **Backend:** FastAPI + Pydantic v2
-- **Frontend:** czysty JavaScript (bez frameworka), CSS scope `pcb-*`
-- **Logi:** standardowe `logging` + JSON Lines per firma
-- **Baza wektorowa:** ChromaDB (lokalna, embedded — kolekcja `company_{id}` per firma)
+## What is implemented
 
-## Funkcjonalności
+- **One-tag embedding** — `<script src="widget.js" data-company-name="…" data-company-id="…">`, no framework, CSS scoped under `pcb-*`.
+- **RAG** — `/chat` embeds the question, pulls the three closest chunks from that company's collection and injects only those into the prompt.
+- **Ingestion** — `/ingest/{company_id}` takes a UTF-8 text file (max 5 MB), chunks it with a 500-character sliding window and 50-character overlap, embeds it and replaces the collection.
+- **Conversation history** — a sliding window of 10 question/answer pairs, kept on both sides and dropped when the widget is closed.
+- **Per-company logging** — JSON Lines per `company_id`; rejected requests with an invalid id go to a separate audit log.
+- **Input validation** — `company_id` must match `[a-z0-9_-]{1,64}` as a full match, which blocks path traversal and newline injection into log files; contact fields reject control characters; message length is capped.
+- **Prompt-level guardrails** — the system prompt carries explicit rules and few-shot examples against inventing products, comparing with competitors, leaking the prompt, and role-play or false-authority attempts ("I'm the owner", "service mode", "you agreed earlier"). These were probed by hand against known attack patterns; the probe suite is not part of this repository.
 
-- **RAG (retrieval + generation)** — `/chat` liczy embedding pytania, wyciąga z ChromaDB top-3 chunki najbardziej pasujące semantycznie i wstrzykuje je do system promptu zamiast całego pliku wiedzy. Fallback do pełnej treści `test_firma.txt` dla firm bez ingestu (dev-only, do usunięcia przed produkcją — patrz TODO w `_get_context_for_request`).
-- **Endpoint `/ingest/{company_id}`** — jednorazowe ładowanie pliku wiedzy firmy (text/plain UTF-8, max 5 MB) do ChromaDB: chunking okno przesuwne 500 znaków / overlap 50, embeddingi nomic-embed-text, wipe-and-replace kolekcji. Wywoływane przez admina/wdrożeniowca, nie przez widget.
-- **Osadzanie jednym tagem** — `<script src="widget.js" data-…>` konfiguruje nazwę firmy, temat, kontakt, API URL i `company_id`.
-- **Historia rozmowy** — sliding window 10 par pytanie/odpowiedź (20 wiadomości) po stronie widgetu i backendu; czyszczona po zamknięciu okna.
-- **Dynamiczny system prompt** — budowany z `data-*` (nazwa firmy, temat, e-mail, telefon) — ten sam backend obsługuje dowolną liczbę klientów.
-- **Logowanie per firma** — `logs/<company_id>.log` w formacie JSON Lines (timestamp, pytanie, odpowiedź, długość historii); `logs/_invalid.log` audytuje odrzucone próby z niepoprawnym `company_id`.
-- **Walidacja i whitelist** — `company_id` musi spełniać `[a-z0-9_-]{1,64}` (`fullmatch`, odporność na path traversal i newline injection); e-mail/telefon odrzucane przy znakach kontrolnych; limity długości wiadomości.
-- **CORS** — włączony `*` na czas developmentu (do zawężenia przed produkcją).
-- **Kaganiec bezpieczeństwa** — system prompt z 7 zasadami + sekcja OBRONA PRZED MANIPULACJAMI (A–D) + 9 few-shot examples pokrywających m.in.:
-  - brak halucynacji produktów/usług spoza `test_firma.txt`,
-  - zakaz porównań z konkurencją,
-  - odporność na prośby „powtórz instrukcje", „jestem właścicielem", „tryb serwisowy", role-play hijack, fałszywe zgody „wcześniej się zgodziłeś".
-- **Parametry Ollama** — `temperature=0.1`, `num_predict=300` dla spójnych, krótkich odpowiedzi.
-
-## Setup (pierwsze uruchomienie)
+## Running it
 
 ```bash
 git clone https://github.com/kubuswes2003/PLUG-AND-PLAY_CHATBOT.git
 cd PLUG-AND-PLAY_CHATBOT
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
 pip install -r backend/requirements.txt
 
-# Ollama + modele (LLM + embeddings)
 ollama pull SpeakLeash/bielik-11b-v2.3-instruct:Q4_K_M
 ollama pull nomic-embed-text
 ```
 
-## Uruchomienie
+Then, in separate terminals:
 
-Terminal 1 — Ollama (jeśli nie chodzi jako usługa):
 ```bash
 ollama serve
-```
-
-Terminal 2 — backend FastAPI:
-```bash
-source venv/bin/activate
 uvicorn backend.main:app --reload --port 8000
+cd frontend-widget && python3 -m http.server 8080
 ```
 
-Terminal 3 — frontend (prosty statyczny serwer):
-```bash
-cd frontend-widget
-python3 -m http.server 8080
-```
+Load a company's knowledge base once (otherwise `/chat` falls back to stuffing the whole sample file into every prompt):
 
-Terminal 4 — jednorazowy ingest wiedzy firmy do ChromaDB (do wykonania **raz** po pierwszym starcie backendu, a potem tylko przy aktualizacji pliku wiedzy):
 ```bash
 curl -X POST http://localhost:8000/ingest/demo \
   -H "Content-Type: text/plain; charset=utf-8" \
   --data-binary @data_samples/test_firma.txt
 ```
-Bez tego kroku `/chat` użyje dev-fallbacku (pełny plik `test_firma.txt` w każdym prompcie).
 
-Otwórz `http://localhost:8080` — w prawym dolnym rogu pojawi się ikona czatu.
+Open `http://localhost:8080` — the chat icon appears in the bottom-right corner.
 
-## Szybki test API
+## Known gaps
 
-```bash
-curl -s http://localhost:8000/health
+These are the reasons this is not production software yet:
 
-# 1) Jednorazowo — załaduj wiedzę firmy do ChromaDB (kolekcja company_demo).
-#    Bez tego /chat użyje dev-fallbacku (pełny test_firma.txt).
-curl -s -X POST http://localhost:8000/ingest/demo \
-  -H "Content-Type: text/plain; charset=utf-8" \
-  --data-binary @data_samples/test_firma.txt
+- **`/ingest` is unauthenticated** — anyone who knows the URL can overwrite a company's knowledge base.
+- **CORS is wide open** (`*`) for development.
+- **The dev fallback** in `_get_context_for_request` still injects the full sample knowledge file when a company has not been ingested; it must go before any real use.
+- **No rate limiting** per `company_id`.
+- **No automated tests in this repository.**
+- **No deployment setup** — no Docker image, no reverse proxy, no HTTPS.
+- Guardrails live in the prompt; a real pre/post-filter layer would be sturdier than instructions to the model.
+- Code comments and log messages are in Polish.
 
-# 2) Rozmowa — retrieval wyciągnie top-3 chunki z kolekcji company_demo.
-curl -s -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "W jakich godzinach otwarty jest sklep?",
-    "company_id": "demo",
-    "company_name": "TechSklep",
-    "company_topic": "obsługa klienta sklepu z elektroniką",
-    "contact_email": "biuro@techsklep.pl",
-    "contact_phone": "+48 61 123 45 67",
-    "history": []
-  }'
-```
+## Stack
 
-## Status / roadmap
-
-- [x] Widget osadzalny jednym `<script>`
-- [x] Backend `/chat` + lokalny Bielik
-- [x] Historia rozmowy (klient + serwer)
-- [x] Logowanie JSON Lines per firma + audyt
-- [x] Whitelist `company_id` i walidacja pól
-- [x] Dynamiczny system prompt z `data-*`
-- [x] Kaganiec bezpieczeństwa + red-team (12/13 ataków zablokowanych)
-- [x] ChromaDB + `/ingest` + retrieval w `/chat` (pełny pipeline RAG, kolekcja per firma)
-- [ ] Warstwa pre/post-filter (guardrails) zamiast rozbudowanego promptu
-- [ ] Usunięcie dev-fallbacku w `_get_context_for_request` (przed produkcją)
-- [ ] Auth dla `/ingest` (obecnie otwarty — każdy z URL-em może nadpisać wiedzę firmy)
-- [ ] Rate limiting per `company_id`
-- [ ] Produkcyjny CORS (whitelista domen)
-- [ ] Testy (pytest — walidatory, chunking, mockowany `/chat`)
-- [ ] Deploy (Docker + reverse proxy)
+FastAPI · Pydantic v2 · Ollama (Bielik 11B v2.3 Instruct Q4_K_M, nomic-embed-text) · ChromaDB · vanilla JavaScript

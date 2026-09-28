@@ -14,8 +14,8 @@ __pycache__/
 *.pyo
 
 # System
-.DS_Store        # Mac
-Thumbs.db        # Windows
+.DS_Store
+Thumbs.db
 
 # IDE
 .vscode/
